@@ -1,5 +1,7 @@
 import { getSchema } from '../../../utils/get-schema.js';
 import { RolesService } from '../../../services/roles.js';
+import { PoliciesService } from '../../../services/index.js';
+import { AccessService } from '../../../services/index.js';
 import getDatabase from '../../../database/index.js';
 import { useLogger } from '../../../logger/index.js';
 
@@ -14,10 +16,32 @@ export default async function rolesCreate({ role: name, admin }: { role: string;
 
 	try {
 		const schema = await getSchema();
-		const service = new RolesService({ schema: schema, knex: database });
+		const rolesService = new RolesService({ schema: schema, knex: database });
+		const policiesService = new PoliciesService({ schema: schema, knex: database });
+		const accessService = new AccessService({ schema: schema, knex: database });
 
-		const id = await service.createOne(admin ? { name, admin_access: admin } : { name });
-		process.stdout.write(`${String(id)}\n`);
+		const adminPolicyId = await policiesService.knex
+			.select('id')
+			.from('directus_policies')
+			.where('admin_access', true)
+			.first();
+
+		if (admin && !adminPolicyId) {
+			logger.error('Cannot create an admin role without an admin policy');
+			database.destroy();
+			process.exit(1);
+		}
+
+		const roleId = await rolesService.createOne({ name });
+
+		if (admin) {
+			await accessService.createOne({
+				role: roleId,
+				policy: adminPolicyId.id,
+			});
+		}
+
+		process.stdout.write(`${String(roleId)}\n`);
 		database.destroy();
 		process.exit(0);
 	} catch (err: any) {
