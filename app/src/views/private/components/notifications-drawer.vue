@@ -29,6 +29,7 @@ const router = useRouter();
 
 const collection = ref<string | null>(null);
 const selection = ref<string[]>([]);
+const confirmDelete = ref(false);
 const tab = ref(['inbox']);
 const openNotifications = ref<string[]>([]);
 const page = ref(1);
@@ -117,38 +118,26 @@ const showingCount = computed(() => {
 	});
 });
 
+const someItemsSelected = computed(
+	() => selection.value.length > 0 && selection.value.length < notifications.value.length,
+);
+
+const allItemsSelected = computed(
+	() => selection.value.length === notifications.value.length && notifications.value.length > 0,
+);
+
 async function refresh() {
 	await getItems();
 	await getTotalCount();
 	await getItemCount();
 }
 
-async function archiveAll() {
-	await api.patch('/notifications', {
-		query: {
-			filter: {
-				_and: [
-					{
-						recipient: {
-							_eq: userStore.currentUser!.id,
-						},
-					},
-					{
-						status: {
-							_eq: 'inbox',
-						},
-					},
-				],
-			},
-		},
-		data: {
-			status: 'archived',
-		},
-	});
-
-	await refresh();
-
-	notificationsStore.setUnreadCount(0);
+async function selectAll() {
+	if (allItemsSelected.value) {
+		selection.value = [];
+	} else {
+		selection.value = notifications.value.map((notification) => notification.id);
+	}
 }
 
 function toggleSelected(id: string) {
@@ -181,6 +170,22 @@ async function toggleArchive() {
 	selection.value = [];
 }
 
+async function deleteSelected() {
+	try {
+		await api.delete('/notifications', {
+			data: {
+				keys: selection.value,
+			},
+		});
+
+		await refresh();
+		await notificationsStore.refreshUnreadCount();
+	} finally {
+		confirmDelete.value = false;
+		selection.value = [];
+	}
+}
+
 function onLinkClick(to: string) {
 	router.push(to);
 
@@ -211,6 +216,34 @@ function clearFilters() {
 
 		<template #actions>
 			<search-input v-model="search" v-model:filter="filter" collection="directus_notifications" />
+			<v-dialog v-model="confirmDelete" :disabled="selection.length === 0" @esc="confirmDelete = false">
+				<template #activator="{ on }">
+					<v-button
+						v-tooltip.bottom="selection.length !== 0 ? t('delete_label') : t('not_allowed')"
+						rounded
+						icon
+						class="action-delete"
+						secondary
+						:disabled="selection.length === 0"
+						@click="on"
+					>
+						<v-icon name="delete" outline />
+					</v-button>
+				</template>
+
+				<v-card>
+					<v-card-title>{{ t('delete_are_you_sure') }}</v-card-title>
+
+					<v-card-actions>
+						<v-button secondary @click="confirmDelete = false">
+							{{ t('cancel') }}
+						</v-button>
+						<v-button kind="danger" @click="deleteSelected">
+							{{ t('delete_label') }}
+						</v-button>
+					</v-card-actions>
+				</v-card>
+			</v-dialog>
 			<v-button
 				v-tooltip.bottom="tab[0] === 'inbox' ? t('archive') : t('unarchive')"
 				icon
@@ -221,16 +254,12 @@ function clearFilters() {
 			>
 				<v-icon :name="tab[0] === 'inbox' ? 'archive' : 'move_to_inbox'" />
 			</v-button>
-			<v-button
-				v-if="tab[0] === 'inbox'"
-				v-tooltip.bottom="t('archive_all')"
-				icon
-				rounded
-				:disabled="notifications.length === 0"
-				@click="archiveAll"
-			>
-				<v-icon name="done_all" />
-			</v-button>
+			<v-checkbox
+				class="select-all"
+				:model-value="allItemsSelected"
+				:indeterminate="someItemsSelected"
+				@update:model-value="selectAll"
+			/>
 		</template>
 
 		<template #sidebar>
@@ -388,6 +417,19 @@ function clearFilters() {
 			}
 		}
 	}
+}
+
+.select-all {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	height: 44px;
+}
+
+.action-delete {
+	--v-button-background-color-hover: var(--theme--danger) !important;
+	--v-button-color-hover: var(--white) !important;
 }
 
 .fade-enter-active,
